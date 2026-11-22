@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 360" width="720" height="360" style="background-color: #ffffff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+  <!-- Title -->
+  <text x="24" y="32" font-size="18" font-weight="700" fill="#0f172a">Leave-One-Rule-Out Ablation: Critical Blocker Distribution</text>
+  <text x="24" y="50" font-size="12" fill="#64748b">Breakdown of primary deterministic rules responsible for stopping adversarial breaches (R1-R5)</text>
+  <text x="204" y="90" font-size="12" font-weight="600" fill="#0f172a" text-anchor="end">R1: Cap Invariant</text>
+  <text x="204" y="105" font-size="10" fill="#64748b" text-anchor="end">Blocks G1 overcaptures & unauth inflations</text>
+  <rect x="220" y="75" width="322.2" height="28" fill="#2563eb" rx="4" opacity="0.9"/>
+  <text x="552.2" y="94" font-size="12" font-weight="700" fill="#0f172a">35.8% (68)</text>
+  <text x="204" y="138" font-size="12" font-weight="600" fill="#0f172a" text-anchor="end">R2: Currency Invariant</text>
+  <text x="204" y="153" font-size="10" fill="#64748b" text-anchor="end">Blocks G2 cross-currency conversions</text>
+  <rect x="220" y="123" width="113.4" height="28" fill="#7c3aed" rx="4" opacity="0.9"/>
+  <text x="343.4" y="142" font-size="12" font-weight="700" fill="#0f172a">12.6% (24)</text>
+  <text x="204" y="186" font-size="12" font-weight="600" fill="#0f172a" text-anchor="end">R3: Allowlist Invariant</text>
+  <text x="204" y="201" font-size="10" fill="#64748b" text-anchor="end">Blocks G2 unknown recipient diversions</text>
+  <rect x="220" y="171" width="246.59999999999997" height="28" fill="#0284c7" rx="4" opacity="0.9"/>
+  <text x="476.59999999999997" y="190" font-size="12" font-weight="700" fill="#0f172a">27.4% (52)</text>
+  <text x="204" y="234" font-size="12" font-weight="600" fill="#0f172a" text-anchor="end">R4: Rate / Velocity Limits</text>
+  <text x="204" y="249" font-size="10" fill="#64748b" text-anchor="end">Blocks micro-batch salami attacks</text>
+  <rect x="220" y="219" width="132.3" height="28" fill="#0d9488" rx="4" opacity="0.9"/>
+  <text x="362.3" y="238" font-size="12" font-weight="700" fill="#0f172a">14.7% (28)</text>
+  <text x="204" y="282" font-size="12" font-weight="600" fill="#0f172a" text-anchor="end">R5: Idempotency Replay</text>
+  <text x="204" y="297" font-size="10" fill="#64748b" text-anchor="end">Blocks replay loops and duplication</text>
+  <rect x="220" y="267" width="85.5" height="28" fill="#475569" rx="4" opacity="0.9"/>
+  <text x="315.5" y="286" font-size="12" font-weight="700" fill="#0f172a">9.5% (18)</text>
+</svg>

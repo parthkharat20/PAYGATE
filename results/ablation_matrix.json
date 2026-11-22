@@ -1,0 +1,96 @@
+{
+  "matrix": {
+    "ADAPT-IP-01": {
+      "Full": "ALLOW",
+      "-R1": "ALLOW",
+      "-R2": "ALLOW",
+      "-R3": "ALLOW",
+      "-R4": "ALLOW",
+      "-R5": "ALLOW"
+    },
+    "ADAPT-IP-02": {
+      "Full": "ALLOW",
+      "-R1": "ALLOW",
+      "-R2": "ALLOW",
+      "-R3": "ALLOW",
+      "-R4": "ALLOW",
+      "-R5": "ALLOW"
+    },
+    "ADAPT-IP-03": {
+      "Full": "ALLOW",
+      "-R1": "ALLOW",
+      "-R2": "ALLOW",
+      "-R3": "ALLOW",
+      "-R4": "ALLOW",
+      "-R5": "ALLOW"
+    },
+    "ADAPT-IP-04": {
+      "Full": "ALLOW",
+      "-R1": "ALLOW",
+      "-R2": "ALLOW",
+      "-R3": "ALLOW",
+      "-R4": "ALLOW",
+      "-R5": "ALLOW"
+    },
+    "ADAPT-IP-05": {
+      "Full": "ALLOW",
+      "-R1": "ALLOW",
+      "-R2": "ALLOW",
+      "-R3": "ALLOW",
+      "-R4": "ALLOW",
+      "-R5": "ALLOW"
+    },
+    "ADAPT-IP-06": {
+      "Full": "ALLOW",
+      "-R1": "ALLOW",
+      "-R2": "ALLOW",
+      "-R3": "ALLOW",
+      "-R4": "ALLOW",
+      "-R5": "ALLOW"
+    },
+    "ADAPT-IP-07": {
+      "Full": "ALLOW",
+      "-R1": "ALLOW",
+      "-R2": "ALLOW",
+      "-R3": "ALLOW",
+      "-R4": "ALLOW",
+      "-R5": "ALLOW"
+    },
+    "ADAPT-IP-08": {
+      "Full": "ALLOW",
+      "-R1": "ALLOW",
+      "-R2": "ALLOW",
+      "-R3": "ALLOW",
+      "-R4": "ALLOW",
+      "-R5": "ALLOW"
+    },
+    "ADAPT-IP-09": {
+      "Full": "ALLOW",
+      "-R1": "ALLOW",
+      "-R2": "ALLOW",
+      "-R3": "ALLOW",
+      "-R4": "ALLOW",
+      "-R5": "ALLOW"
+    },
+    "ADAPT-IP-10": {
+      "Full": "ALLOW",
+      "-R1": "ALLOW",
+      "-R2": "ALLOW",
+      "-R3": "ALLOW",
+      "-R4": "ALLOW",
+      "-R5": "ALLOW"
+    }
+  },
+  "critical_blockers": {
+    "ADAPT-IP-01": "None (in-policy / multi-violation)",
+    "ADAPT-IP-02": "None (in-policy / multi-violation)",
+    "ADAPT-IP-03": "None (in-policy / multi-violation)",
+    "ADAPT-IP-04": "None (in-policy / multi-violation)",
+    "ADAPT-IP-05": "None (in-policy / multi-violation)",
+    "ADAPT-IP-06": "None (in-policy / multi-violation)",
+    "ADAPT-IP-07": "None (in-policy / multi-violation)",
+    "ADAPT-IP-08": "None (in-policy / multi-violation)",
+    "ADAPT-IP-09": "None (in-policy / multi-violation)",
+    "ADAPT-IP-10": "None (in-policy / multi-violation)"
+  }
+}
