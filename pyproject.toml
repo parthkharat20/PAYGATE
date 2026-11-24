@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "paygate-bench"
-version = "0.1.0"
+version = "0.2.0"
 description = "A benchmark and defense evaluation for payment-authorisation agents under prompt injection"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -41,4 +41,8 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
 pythonpath = ["."]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["paygate*"]
 

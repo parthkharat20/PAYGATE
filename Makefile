@@ -1,4 +1,4 @@
-.PHONY: setup test run-mvp run-full bench-latency corpus figures clean
+.PHONY: setup test run-ablation bench-latency clean
 
 VENV := .venv
 PYTHON := $(VENV)/bin/python
@@ -9,22 +9,13 @@ setup:
 	$(VENV)/bin/pip install -e .[dev]
 
 test:
-	PYTHONPATH=. $(PYTEST) -v tests/
+	MPLCONFIGDIR=/tmp/mpl_cache PYTHONPATH=. $(PYTEST) -v tests/
 
-run-mvp:
-	PYTHONPATH=. $(PYTHON) eval/runner.py --corpus adaptive --mode sim
-
-run-full:
-	PYTHONPATH=. $(PYTHON) eval/runner.py --corpus all --mode sim
+run-ablation:
+	MPLCONFIGDIR=/tmp/mpl_cache PYTHONPATH=. $(PYTHON) scripts/run_ablation.py --mock
 
 bench-latency:
 	PYTHONPATH=. $(PYTHON) eval/latency_bench.py
 
-corpus:
-	PYTHONPATH=. $(PYTHON) tasks/generate_corpus.py
-
-figures:
-	PYTHONPATH=. $(PYTHON) eval/plot_figures.py
-
 clean:
-	rm -rf .pytest_cache results/*.jsonl results/*.sqlite figures/*.svg
+	rm -rf .pytest_cache results/raw_runs.jsonl results/ablation_summary.json /tmp/mpl_cache
