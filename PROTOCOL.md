@@ -1,64 +1,52 @@
-# Pre-Registered Protocol: PayGate-Bench
+# Pre-Registered Evaluation Protocol: PayGate-Bench (v2.0)
 
 **Author:** Parth Bhagwat Kharat  
-**Status:** Pre-Registered Protocol (`PROTOCOL.md`)  
-**Commit Requirement:** This specification is committed to version control before executing formal evaluation test runs.
+**Status:** Specification (`PROTOCOL.md`)  
 
 ---
 
 ## 1. Research Question
 
-> **Against prompt injection hidden in untrusted business documents, how much does a deterministic payment-policy gate reduce attack success compared with a prompt-only guardrail and with no defense, at what cost to legitimate tasks and latency, and which attacks still succeed inside the gate's own rules?**
+> **Against Indirect Prompt Injection (IPI) embedded in untrusted B2B documents, how much does an out-of-band Trusted Computing Base (TCB) enforcing stateful DFA transitions, cryptographic consent binding ($R_6$), and session-level Information-Flow Control ($R_8$) reduce attack success compared with unconstrained execution, LLM-as-a-Judge guardrails, and standard perimeter gateways ($R_1$–$R_5$)—and at what utility cost and latency overhead?**
 
 ---
 
-## 2. Pre-Registered Hypotheses (Falsifiable)
+## 2. Falsifiable Hypotheses
 
-* **`H1`:** The deterministic gate (`C2`) achieves a lower Attack Success Rate than permissive no-defense (`C0a`) and prompt guardrails (`C1`) on direct injection attacks. The processor-grade baseline (`C0b`) establishes the floor of standard rail checks; the gate's value is quantified by what it adds beyond `C0b`.
-* **`H2`:** The deterministic gate (`C2`) is not at zero on in-policy attacks: semantic manipulations that satisfy every syntactic invariant (`R1`–`R5`) can still alter intended business outcomes.
-* **`H3`:** A well-crafted prompt-only guardrail (`C1`) leaves a non-trivial Attack Success Rate, particularly on multilingual (German, Danish) and format-mimicking injection styles.
-* **`H4`:** Gate decision time is small compared with a single LLM API call (the exact ratio $T_{\text{gate}} / T_{\text{LLM}}$ is reported empirically without assumption).
+* **`H1` (Perimeter vs. Unconstrained):** Both standard perimeter gateways (`static_gateway_r1_r5`) and `paygate_full` reduce Out-of-Policy Attack Success Rate ($G_1$–$G_3$) relative to `no_defense` and `prompt_plus_llm_judge`.
+* **`H2` (Perimeter Blindspot on Semantic Subversion):** `static_gateway_r1_r5` exhibits non-zero vulnerability on In-Policy Semantic Subversion ($G_4$: decoy allowlisted routing, temporal consent steering) and Canary Data Exfiltration ($G_5$).
+* **`H3` (TCB + Dynamic IFC Closure):** `paygate_full` (enforcing DFA + $R_1$–$R_8$) reduces both Out-of-Policy ($G_1$–$G_3$) and In-Policy Semantic ($G_4$–$G_5$) ASR to near-zero while preserving benign workflow utility.
+* **`H4` (Latency Separation):** Pure deterministic TCB gate overhead ($T_{\text{gate}}$) remains sub-millisecond ($\le 50\ \mu\text{s}$ p50), orders of magnitude faster than LLM-as-a-Judge inference ($T_{\text{judge}} \sim 10^2\text{--}10^3\text{ ms}$).
 
 ---
 
 ## 3. Defense Configurations
 
-| Config | Description | Invariant Enforcement |
-|---|---|---|
-| **`C0a`** | **Permissive Core** | Raw baseline. Executes actions with basic type and sign validation only. Overcaptures and invalid recipients execute. |
-| **`C0b`** | **Processor Layer** | Enforces standard payment-rail rules: captures $\le$ authorized remaining, currency match, positive amounts. |
-| **`C1`** | **Prompt Guardrail** | System prompt instructions prohibiting policy violations. Tuned strictly on **Dev Split**, then frozen for **Test Split**. |
-| **`C2`** | **Deterministic Gate** | External deterministic rule engine enforcing rules `R1` through `R7` before committing state mutations. |
-| **`C3`** | **Schema Gate (Target)** | Schema-constrained extraction + deterministic policy gate (AuthHorizon architecture). |
+| Configuration | Description | Enforcement Scope |
+|:--|:--|:--|
+| **`no_defense`** | Unconstrained Baseline | Raw execution without DFA or policy gate checks. |
+| **`prompt_plus_llm_judge`** | Defensive Prompt + LLM Guardrail | Guarded system prompt + real LLM-as-a-Judge classifier before tool execution + DFA. |
+| **`static_gateway_r1_r5`** | Perimeter Gateway Baseline | Enforces $R_1$ (Cap), $R_2$ (Currency), global allowlist membership, $R_4$ (Velocity), $R_5$ (Idempotency) + DFA. |
+| **`paygate_full`** | Complete Out-of-Band TCB | Enforces DFA + $R_1$–$R_7$ (Order-bound $R_3$, HMAC consent $R_6$, audit chain $R_7$) + Out-of-Band Session IFC ($R_8$) + Temporal Trace Monitor. |
 
 ---
 
-## 4. Gate Rules (`R1`–`R7`)
+## 4. Invariants ($R_1$–$R_8$) & Non-Short-Circuiting Analysis
 
-* **`R1` (Cap Invariant):** Captured total never exceeds order authorization; capture never exceeds remaining authorized.
-* **`R2` (Currency Invariant):** Operation currency strictly equals order currency.
-* **`R3` (Allowlist Invariant):** Recipient exists in the pre-configured merchant allowlist.
-* **`R4` (Rate/Cumulative Limits):** Velocity caps on transaction count and cumulative amount within a sliding temporal window.
-* **`R5` (Idempotency Invariant):** Unique execution per key. Repeated identical key returns cached response; duplicate key with conflicting parameters is blocked.
-* **`R6` (Kill Switch):** Global circuit breaker. Tested separately in dedicated kill-switch scenarios.
-* **`R7` (HMAC Audit Chain):** Immutable append-only log. Tested separately via tamper-detection verification.
+* **`R1` (Authorization Cap):** Capture $\le$ remaining authorized; refund $\le$ refundable captured.
+* **`R2` (Currency Binding):** Operation currency strictly matches order currency.
+* **`R3` (Order-Bound Allowlist):** Recipient exists in global allowlist AND equals `order.bound_merchant_id`.
+* **`R4` (Metric Sliding-Window Velocity):** Over sliding window $W=60\text{s}$, tx count $\le 10$ and cumulative volume $\le 5000.00$.
+* **`R5` (Strict Idempotency):** Identical canonical request hashes return cached decision; conflicting arguments under a reused key are blocked.
+* **`R6` (Cryptographic Consent & Kill-Switch):** Mutations require `APPROVED` consent + valid $\text{HMAC-SHA256}(K_{\text{erp}}, \text{order\_id} \mathbin{\Vert} \text{po\_hash})$ + disarmed kill switch.
+* **`R7` (Tamper-Evident Audit Chain):** Append-only HMAC-SHA256 hash chain over all gate decisions.
+* **`R8` (Out-of-Band Session IFC):** Tracks untrusted document reads inside the TCB; blocks untrusted void/refund/consent capabilities and outbound canary/untrusted sink exfiltration.
 
-**Analysis Rule:** In the analysis path, every rule is evaluated on every proposal, and all violated rules are recorded. Rule ablation is applied to `R1`–`R5` only.
+**Analysis Rule:** Every gate evaluation checks all active rules without short-circuiting so rule attribution statistics remain unbiased.
 
 ---
 
 ## 5. Statistical Formulations
 
-### 5.1. Wilson Score Confidence Intervals
-For $k$ successes in $n$ trials ($\hat{p} = k/n$) at 95% confidence ($z = 1.96$):
-
-$$\text{Centre} = \frac{\hat{p} + \frac{z^2}{2n}}{1 + \frac{z^2}{n}}, \quad \text{Half-Width} = \frac{z}{1 + \frac{z^2}{n}} \sqrt{\frac{\hat{p}(1-\hat{p})}{n} + \frac{z^2}{4n^2}}$$
-
-**Zero-Success Edge Case:** When $k = 0$, the interval is $[0.0, \; \frac{z^2}{n + z^2}]$. For $n = 150$, the upper bound is $\approx 2.5\%$. This is reported honestly as $[0.0\%, 2.5\%]$, never as $0\%$.
-
-### 5.2. Paired McNemar Test
-Paired comparisons on identical test cases between configurations use the continuity-corrected McNemar statistic:
-
-$$\chi^2 = \frac{(|b - c| - 1)^2}{b + c}$$
-
-Exact binomial test is applied when $b + c < 25$.
+* **Wilson Score 95% Confidence Intervals:** Exact binomial interval handling $k=0$ edge cases honestly as $[0.0, \frac{z^2}{n + z^2}]$.
+* **Paired Exact McNemar Tests:** Continuity-corrected $\chi^2$ and exact two-sided binomial $p$-values on matched scenario pairs across configurations.

@@ -1,0 +1,138 @@
+{
+  "summary": {
+    "no_defense": {
+      "model": "CI-MOCK",
+      "benign_utility_pct": 100.0,
+      "benign_successes": 25,
+      "benign_total": 25,
+      "frr_pct": 0.0,
+      "oop_asr_pct": 100.0,
+      "oop_successes": 15,
+      "oop_total": 15,
+      "oop_wilson_95": [
+        79.6,
+        100.0
+      ],
+      "ip_asr_pct": 100.0,
+      "ip_successes": 10,
+      "ip_total": 10,
+      "ip_wilson_95": [
+        72.2,
+        100.0
+      ],
+      "total_asr_pct": 100.0,
+      "total_wilson_95": [
+        86.7,
+        100.0
+      ],
+      "latency_p50_ms": 0.012875,
+      "latency_p95_ms": 0.045717,
+      "latency_p99_ms": 0.081664,
+      "trace_monitor_violations": null
+    },
+    "prompt_plus_llm_judge": {
+      "model": "CI-MOCK",
+      "benign_utility_pct": 100.0,
+      "benign_successes": 25,
+      "benign_total": 25,
+      "frr_pct": 0.0,
+      "oop_asr_pct": 46.7,
+      "oop_successes": 7,
+      "oop_total": 15,
+      "oop_wilson_95": [
+        24.8,
+        69.9
+      ],
+      "ip_asr_pct": 100.0,
+      "ip_successes": 10,
+      "ip_total": 10,
+      "ip_wilson_95": [
+        72.2,
+        100.0
+      ],
+      "total_asr_pct": 68.0,
+      "total_wilson_95": [
+        48.4,
+        82.8
+      ],
+      "latency_p50_ms": 0.000375,
+      "latency_p95_ms": 0.000584,
+      "latency_p99_ms": 0.001212,
+      "trace_monitor_violations": null
+    },
+    "static_gateway_r1_r5": {
+      "model": "CI-MOCK",
+      "benign_utility_pct": 100.0,
+      "benign_successes": 25,
+      "benign_total": 25,
+      "frr_pct": 0.0,
+      "oop_asr_pct": 40.0,
+      "oop_successes": 6,
+      "oop_total": 15,
+      "oop_wilson_95": [
+        19.8,
+        64.3
+      ],
+      "ip_asr_pct": 100.0,
+      "ip_successes": 10,
+      "ip_total": 10,
+      "ip_wilson_95": [
+        72.2,
+        100.0
+      ],
+      "total_asr_pct": 64.0,
+      "total_wilson_95": [
+        44.5,
+        79.8
+      ],
+      "latency_p50_ms": 0.009646,
+      "latency_p95_ms": 0.017679,
+      "latency_p99_ms": 0.024231,
+      "trace_monitor_violations": null
+    },
+    "paygate_full": {
+      "model": "CI-MOCK",
+      "benign_utility_pct": 100.0,
+      "benign_successes": 25,
+      "benign_total": 25,
+      "frr_pct": 0.0,
+      "oop_asr_pct": 0.0,
+      "oop_successes": 0,
+      "oop_total": 15,
+      "oop_wilson_95": [
+        0.0,
+        20.4
+      ],
+      "ip_asr_pct": 0.0,
+      "ip_successes": 0,
+      "ip_total": 10,
+      "ip_wilson_95": [
+        0.0,
+        27.8
+      ],
+      "total_asr_pct": 0.0,
+      "total_wilson_95": [
+        0.0,
+        13.3
+      ],
+      "latency_p50_ms": 0.018438,
+      "latency_p95_ms": 0.029656,
+      "latency_p99_ms": 0.275115,
+      "trace_monitor_violations": 3
+    }
+  },
+  "mcnemar": {
+    "no_defense_vs_paygate_full": {
+      "chi2": 23.04,
+      "p_value": 0.0
+    },
+    "prompt_plus_llm_judge_vs_paygate_full": {
+      "chi2": 15.0588,
+      "p_value": 1.5e-05
+    },
+    "static_gateway_r1_r5_vs_paygate_full": {
+      "chi2": 14.0625,
+      "p_value": 3.1e-05
+    }
+  }
+}

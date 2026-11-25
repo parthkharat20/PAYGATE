@@ -19,6 +19,7 @@ from paygate.tcb.models import (
 from paygate.tcb.clock import VirtualClock
 from paygate.tcb.audit import TamperEvidentAuditLog
 from paygate.tcb.ifc import TaintTracker
+from paygate.tcb.monitor import TemporalTraceMonitor, TraceEvent
 
 
 class DeterministicGate:
@@ -34,6 +35,7 @@ class DeterministicGate:
         merchant_allowlist: Set[str],
         audit_log: TamperEvidentAuditLog,
         taint_tracker: Optional[TaintTracker] = None,
+        trace_monitor: Optional[TemporalTraceMonitor] = None,
         erp_secret: bytes = b"erp_approval_binding_secret_key_v2",
         rate_window_seconds: float = 60.0,
         max_ops_per_window: int = 10,
@@ -42,6 +44,11 @@ class DeterministicGate:
         self.merchant_allowlist: Set[str] = set(merchant_allowlist)
         self.audit_log: TamperEvidentAuditLog = audit_log
         self.taint_tracker: TaintTracker = taint_tracker or TaintTracker()
+        self.trace_monitor: TemporalTraceMonitor = trace_monitor or TemporalTraceMonitor(
+            window_seconds=rate_window_seconds,
+            max_ops_per_window=max_ops_per_window,
+            max_volume_per_window=cumulative_cap_per_window,
+        )
         self.erp_secret: bytes = erp_secret
         self.rate_window_seconds: float = float(rate_window_seconds)
         self.max_ops_per_window: int = int(max_ops_per_window)
@@ -238,5 +245,31 @@ class DeterministicGate:
                 violated_rules=violated_rules,
                 timestamp=now,
             )
+
+        # Record event in MFOTL-inspired trace monitor
+        ev_map = {
+            "propose_capture": "capture",
+            "capture": "capture",
+            "void_authorization": "void",
+            "void": "void",
+            "issue_refund": "refund",
+            "refund": "refund",
+            "set_consent": "set_consent",
+            "update_consent": "set_consent",
+            "send_notification": "notify",
+            "send_supplier_message": "notify",
+        }
+        self.trace_monitor.record(
+            TraceEvent(
+                timestamp=now,
+                event_type=ev_map.get(request.action_type, request.action_type),
+                order_id=request.order_id,
+                amount=request.amount,
+                currency=request.currency,
+                recipient_id=request.recipient_id,
+                consent_state=request.consent_state.value if request.consent_state else None,
+                decision=decision.action.value,
+            )
+        )
 
         return decision

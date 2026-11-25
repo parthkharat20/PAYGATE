@@ -1,4 +1,4 @@
-.PHONY: setup test run-ablation bench-latency clean
+.PHONY: setup test run-ci run-live replay bench-latency clean
 
 VENV := .venv
 PYTHON := $(VENV)/bin/python
@@ -11,11 +11,17 @@ setup:
 test:
 	MPLCONFIGDIR=/tmp/mpl_cache PYTHONPATH=. $(PYTEST) -v tests/
 
-run-ablation:
-	MPLCONFIGDIR=/tmp/mpl_cache PYTHONPATH=. $(PYTHON) scripts/run_ablation.py --mock
+run-ci:
+	MPLCONFIGDIR=/tmp/mpl_cache PYTHONPATH=. $(PYTHON) scripts/run_ablation.py --ci
+
+run-live:
+	MPLCONFIGDIR=/tmp/mpl_cache PYTHONPATH=. $(PYTHON) scripts/run_ablation.py --live
+
+replay:
+	PYTHONPATH=. $(PYTHON) scripts/replay_ablation.py
 
 bench-latency:
-	PYTHONPATH=. $(PYTHON) eval/latency_bench.py
+	PYTHONPATH=. $(PYTHON) scripts/latency_bench.py
 
 clean:
-	rm -rf .pytest_cache results/raw_runs.jsonl results/ablation_summary.json /tmp/mpl_cache
+	rm -rf .pytest_cache results/ci_mock_* /tmp/mpl_cache

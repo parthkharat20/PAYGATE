@@ -26,6 +26,7 @@ from paygate.tcb.ifc import ProvenanceLattice, TaintTracker
 from paygate.tcb.audit import TamperEvidentAuditLog, AuditEntry
 from paygate.tcb.invariants import DeterministicGate
 from paygate.tcb.simulator import StateSimulator
+from paygate.tcb.monitor import TemporalTraceMonitor, TraceEvent
 
 __all__ = [
     "VirtualClock",
@@ -47,4 +48,6 @@ __all__ = [
     "AuditEntry",
     "DeterministicGate",
     "StateSimulator",
+    "TemporalTraceMonitor",
+    "TraceEvent",
 ]

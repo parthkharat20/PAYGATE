@@ -74,7 +74,7 @@ class Order(BaseModel):
     auth_amount: Decimal = Field(gt=Decimal("0.00"))
     captured_total: Decimal = Field(default=Decimal("0.00"), ge=Decimal("0.00"))
     refunded_total: Decimal = Field(default=Decimal("0.00"), ge=Decimal("0.00"))
-    status: OrderStatus = Field(default=OrderStatus.AUTHORIZED)
+    status: Optional[OrderStatus] = None
     consent_state: ConsentState = Field(default=ConsentState.WAIT)
     auth_expires_at: float
     merchant_id: str
@@ -87,6 +87,19 @@ class Order(BaseModel):
     def populate_defaults(self) -> "Order":
         if self.bound_merchant_id is None:
             self.bound_merchant_id = self.merchant_id
+
+        # Infer consistent DFA status from pre-seeded balances when status is omitted
+        if self.status is None:
+            if self.captured_total > Decimal("0.00"):
+                if self.refunded_total >= self.captured_total:
+                    self.status = OrderStatus.REFUNDED
+                elif self.captured_total >= self.auth_amount:
+                    self.status = OrderStatus.SETTLED
+                else:
+                    self.status = OrderStatus.PARTIALLY_CAPTURED
+            else:
+                self.status = OrderStatus.AUTHORIZED
+
         if self.po_hash is None:
             items_repr = json.dumps([item.canonical_dict() for item in self.items], sort_keys=True)
             self.po_hash = hashlib.sha256(
