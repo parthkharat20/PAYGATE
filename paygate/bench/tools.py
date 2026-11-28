@@ -39,10 +39,17 @@ class AgentToolExecutor:
         self.gate_latencies_ns: List[int] = []
         self.judge_latencies_ns: List[int] = []
 
-    def set_trusted_context(self, user_task: str) -> None:
+    def set_trusted_context(
+        self,
+        user_task: str,
+        authorized_capabilities: Optional[List[str]] = None,
+    ) -> None:
         self._user_task = user_task
         if self.gate:
-            self.gate.taint_tracker.set_trusted_context(user_task)
+            self.gate.taint_tracker.set_trusted_context(
+                user_task,
+                authorized_capabilities=authorized_capabilities,
+            )
 
     def _parse_decimal(self, val: Any) -> Decimal:
         try:

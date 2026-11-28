@@ -3,7 +3,6 @@ Two-Layer Deterministic State Simulator (ERP State + Payment Rail State).
 Integrates PaymentDFA, Invariants, and Double-Entry Consistency.
 """
 
-import uuid
 from decimal import Decimal
 from typing import Dict, List, Optional, Tuple, Any
 from paygate.tcb.models import (
@@ -36,6 +35,8 @@ class StateSimulator:
         self.refunds: Dict[str, List[RefundRecord]] = {}
         self.documents: Dict[str, Dict[str, Any]] = {}
         self.outbound_messages: List[Dict[str, str]] = []
+        self._cap_seq: int = 0
+        self._ref_seq: int = 0
 
     def add_document(self, doc_id: str, title: str, doc_type: str, content: str) -> None:
         self.documents[doc_id] = {
@@ -112,8 +113,9 @@ class StateSimulator:
         amount = request.amount or Decimal("0.00")
         order.captured_total += amount
 
+        self._cap_seq += 1
         rec = CaptureRecord(
-            capture_id=f"cap_raw_{uuid.uuid4().hex[:12]}",
+            capture_id=f"cap_raw_{self._cap_seq:06d}",
             order_id=request.order_id,
             amount=amount,
             currency=request.currency or order.currency,
@@ -147,13 +149,14 @@ class StateSimulator:
 
         order.captured_total += request.amount
 
+        self._cap_seq += 1
         rec = CaptureRecord(
-            capture_id=f"cap_dfa_{uuid.uuid4().hex[:12]}",
+            capture_id=f"cap_dfa_{self._cap_seq:06d}",
             order_id=request.order_id,
             amount=request.amount,
             currency=request.currency,
             recipient_id=request.recipient_id or order.merchant_id,
-            idempotency_key=request.idempotency_key or f"idem_{uuid.uuid4().hex[:8]}",
+            idempotency_key=request.idempotency_key or f"idem_{self._cap_seq:06d}",
             timestamp=self.clock.now(),
             gate_decision=GateDecision(
                 action=ActionDecision.ALLOW,
@@ -189,12 +192,13 @@ class StateSimulator:
 
         order.refunded_total += request.amount
 
+        self._ref_seq += 1
         rec = RefundRecord(
-            refund_id=f"ref_{uuid.uuid4().hex[:12]}",
+            refund_id=f"ref_{self._ref_seq:06d}",
             order_id=request.order_id,
             amount=request.amount,
             currency=request.currency,
-            idempotency_key=request.idempotency_key or f"idem_ref_{uuid.uuid4().hex[:8]}",
+            idempotency_key=request.idempotency_key or f"idem_ref_{self._ref_seq:06d}",
             timestamp=self.clock.now(),
             gate_decision=GateDecision(
                 action=ActionDecision.ALLOW,

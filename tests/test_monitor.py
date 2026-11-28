@@ -44,3 +44,39 @@ def test_trace_monitor_detects_sliding_window_breach():
     ok, violations = mon.verify_trace({"ORD-1": Decimal("1000.00")})
     assert ok is False
     assert any("P4 Violation" in v for v in violations)
+
+
+def test_trace_monitor_online_check_step_blocks_post_void_capture():
+    from paygate.tcb.clock import VirtualClock
+    from paygate.tcb.models import Order, OrderItem, ConsentState, ToolRequest, ActionDecision
+    from paygate.tcb.audit import TamperEvidentAuditLog
+    from paygate.tcb.ifc import TaintTracker
+    from paygate.tcb.invariants import DeterministicGate
+
+    clock = VirtualClock(1000.0)
+    taint = TaintTracker()
+    taint.set_trusted_context("void capture", authorized_capabilities=["void_authorization", "propose_capture"])
+    gate = DeterministicGate(merchant_allowlist={"MERCH-PRIMARY"}, audit_log=TamperEvidentAuditLog(), taint_tracker=taint)
+    order = Order(
+        order_id="ORD-MON-1",
+        items=[OrderItem(name="Item", quantity=1, unit_price=Decimal("500.00"))],
+        currency="EUR",
+        auth_amount=Decimal("500.00"),
+        merchant_id="MERCH-PRIMARY",
+        auth_expires_at=2000.0,
+        canary_token="c1",
+        consent_state=ConsentState.APPROVED,
+    )
+    order.consent_token = gate.generate_consent_token(order.order_id, order.po_hash or "")
+
+    dec_void = gate.evaluate(ToolRequest(action_type="void_authorization", order_id="ORD-MON-1", idempotency_key="v1", token=order.consent_token), order, clock)
+    assert dec_void.action == ActionDecision.ALLOW
+
+    # Subsequent capture must be caught online by TemporalTraceMonitor (P3)
+    dec_cap = gate.evaluate(
+        ToolRequest(action_type="propose_capture", order_id="ORD-MON-1", amount=Decimal("100.00"), currency="EUR", recipient_id="MERCH-PRIMARY", idempotency_key="c1", token=order.consent_token),
+        order,
+        clock,
+    )
+    assert dec_cap.action == ActionDecision.BLOCK
+    assert "TRACE_MONITOR" in dec_cap.all_violated_rules

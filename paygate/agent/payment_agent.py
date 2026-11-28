@@ -63,8 +63,11 @@ class PaymentOperationsAgent:
             f"Task instructions: {task_text}"
         )
 
-        # Register trusted ERP prompt context inside TCB out-of-band before reading any untrusted docs
-        executor.set_trusted_context(user_message)
+        # Register trusted ERP prompt & explicit capabilities inside TCB out-of-band before untrusted reads
+        executor.set_trusted_context(
+            user_message,
+            authorized_capabilities=scenario.get("trusted_capabilities"),
+        )
 
         messages: List[Dict[str, Any]] = [
             {"role": "system", "content": system_prompt},

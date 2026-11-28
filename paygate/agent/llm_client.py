@@ -5,13 +5,14 @@ and time.perf_counter_ns() latency profiling.
 """
 
 import os
+import re
 import time
 import json
 import sqlite3
 import hashlib
 import urllib.request
 import urllib.error
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 
 
 def _load_dotenv_if_present() -> None:
@@ -100,10 +101,7 @@ class CachedLLMClient:
         if self.mock_mode or not self.api_key:
             return self._mock_call(messages, tools)
 
-        t0 = time.perf_counter_ns()
-        response_payload = self._live_call(messages, tools, model_id)
-        t1 = time.perf_counter_ns()
-        latency_ms = (t1 - t0) / 1_000_000.0
+        response_payload, latency_ms = self._live_call(messages, tools, model_id)
 
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
@@ -194,7 +192,7 @@ class CachedLLMClient:
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]],
         model_id: str,
-    ) -> Dict[str, Any]:
+    ) -> Tuple[Dict[str, Any], float]:
         url = self.base_url or "https://api.groq.com/openai/v1/chat/completions"
         headers = {
             "Content-Type": "application/json",
@@ -214,11 +212,14 @@ class CachedLLMClient:
         payload_bytes = json.dumps(body).encode("utf-8")
 
         last_err: Optional[Exception] = None
-        for attempt in range(5):
+        for attempt in range(12):
             req = urllib.request.Request(url, data=payload_bytes, headers=headers)
             try:
+                t0 = time.perf_counter_ns()
                 with urllib.request.urlopen(req, timeout=45) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
+                latency_ms = (time.perf_counter_ns() - t0) / 1_000_000.0
+
                 choice = data["choices"][0]["message"]
                 tool_calls = []
                 for tc in choice.get("tool_calls") or []:
@@ -234,17 +235,38 @@ class CachedLLMClient:
                 return {
                     "content": choice.get("content") or "",
                     "tool_calls": tool_calls,
-                }
+                }, latency_ms
             except urllib.error.HTTPError as e:
                 last_err = e
                 err_body = e.read().decode("utf-8", errors="ignore")
+                if e.code == 400 and "tool_use_failed" in err_body:
+                    # Model emitted prose or malformed XML tool call; gracefully terminate turn cleanly
+                    return {
+                        "content": f"[tool_use_failed fallback] {err_body[:180]}",
+                        "tool_calls": [],
+                    }, 0.0
                 if e.code == 429 or e.code >= 500:
-                    time.sleep(min(2.0 ** attempt, 12.0))
+                    wait_s = min(8.0 * (attempt + 1), 62.0)
+                    retry_after = e.headers.get("Retry-After") if e.headers else None
+                    if retry_after:
+                        try:
+                            wait_s = min(float(retry_after) + 1.0, 120.0)
+                        except ValueError:
+                            pass
+                    else:
+                        m = re.search(r"try again in (?:(\d+)h)?(?:(\d+)m)?([\d.]+)s", err_body)
+                        if m:
+                            hrs = int(m.group(1) or 0)
+                            mins = int(m.group(2) or 0)
+                            secs = float(m.group(3))
+                            wait_s = min(hrs * 3600.0 + mins * 60.0 + secs + 1.0, 120.0)
+                    print(f"  [RateLimit HTTP {e.code}] {model_id} sleeping {wait_s:.1f}s (attempt {attempt+1}/12)", flush=True)
+                    time.sleep(wait_s)
                     continue
                 raise RuntimeError(f"LLM API HTTP {e.code} for {model_id}: {err_body}") from e
             except Exception as e:
                 last_err = e
-                time.sleep(1.5)
+                time.sleep(2.0)
                 continue
 
         raise RuntimeError(f"LLM API call failed after retries for {model_id}: {last_err}")

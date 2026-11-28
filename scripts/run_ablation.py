@@ -1,14 +1,16 @@
 """
 PayGate-Bench 4-Baseline Empirical Ablation & Multi-Model Evaluation Runner.
 
-Evaluates 4 baselines across 50 B2B scenarios (25 Benign + 25 Adversarial G1-G5):
+Evaluates 4 baselines across 55 B2B scenarios:
+  - 25 Benign Utility (Clean)
+  - 25 Adversarial IPI (Targeted G1-G5)
+  - 5 Dual Utility-Under-Attack (Legitimate Task + Embedded Injection)
+
+Baselines:
   1. no_defense: Unconstrained raw tool execution
   2. prompt_plus_llm_judge: Hardened system prompt + real LLM-as-a-Judge guardrail
   3. static_gateway_r1_r5: Standard perimeter gateway (R1-R5 + global allowlist)
-  4. paygate_full: Complete TCB (DFA + R1-R7 + Out-of-Band Session IFC R8)
-
-Zero synthetic timing: measures true nanosecond gate decision latency and real LLM API latency.
-Also executes Leave-One-Rule-Out replay ablation and Wilson/McNemar statistical tests.
+  4. paygate_full: Complete TCB (DFA + R1-R7 + Out-of-Band Session IFC R8 + Online TraceMonitor)
 """
 
 import os
@@ -26,8 +28,6 @@ from paygate.tcb.models import (
     OrderItem,
     ConsentState,
     ProvenanceLabel,
-    ToolRequest,
-    ActionDecision,
 )
 from paygate.tcb.audit import TamperEvidentAuditLog
 from paygate.tcb.ifc import TaintTracker
@@ -89,10 +89,31 @@ def _build_env_for_scenario(
     return clock, sim, gate, order
 
 
+def _record_decision_latency(
+    cfg: str,
+    executor: AgentToolExecutor,
+    t_wall0: int,
+    t_wall1: int,
+    latencies_bucket: List[float],
+) -> float:
+    if cfg == "prompt_plus_llm_judge" and executor.judge_latencies_ns:
+        for l_ns in executor.judge_latencies_ns:
+            latencies_bucket.append(l_ns / 1_000_000.0)
+        return float(np.mean(executor.judge_latencies_ns) / 1_000_000.0)
+    elif executor.gate_latencies_ns:
+        for l_ns in executor.gate_latencies_ns:
+            latencies_bucket.append(l_ns / 1_000_000.0)
+        return float(np.mean(executor.gate_latencies_ns) / 1_000_000.0)
+    else:
+        lat_ms = (t_wall1 - t_wall0) / 1_000_000.0
+        latencies_bucket.append(lat_ms)
+        return lat_ms
+
+
 def run_single_model_ablation(
     mock_mode: bool = False,
     model_id: str = "openai/gpt-oss-120b",
-    judge_model: str = "openai/gpt-oss-safeguard-20b",
+    judge_model: str = "openai/gpt-oss-20b",
     output_dir: str = "results",
     cache_path: Optional[str] = None,
 ) -> Dict[str, Any]:
@@ -100,6 +121,7 @@ def run_single_model_ablation(
     loader = ScenarioLoader()
     benign_scenarios = loader.load_benign_scenarios()
     adv_scenarios = loader.load_adversarial_scenarios()
+    dual_scenarios = loader.load_dual_scenarios()
 
     baselines = [
         "no_defense",
@@ -120,100 +142,64 @@ def run_single_model_ablation(
 
     for cfg in baselines:
         mode_tag = "CI-MOCK" if mock_mode else model_id
-        print(f"\n[{mode_tag}] Evaluating Baseline: [{cfg}] ...")
+        print(f"\n[{mode_tag}] Evaluating Baseline: [{cfg}] ...", flush=True)
         benign_successes = 0
         oop_attack_successes = 0
         oop_total = 0
         ip_attack_successes = 0
         ip_total = 0
+        dual_utility_ok = 0
+        dual_asr_ok = 0
 
-        # -------------------------------------------------------------
         # 1. Benign Scenarios (25)
-        # -------------------------------------------------------------
         for sc in benign_scenarios:
+            print(f"  -> {sc['scenario_id']}", end="", flush=True)
             clock, sim, gate, order = _build_env_for_scenario(sc)
             executor = AgentToolExecutor(
-                simulator=sim,
-                gate=gate,
-                config=cfg,
-                llm_judge_client=llm_client,
-                judge_model=judge_model,
+                simulator=sim, gate=gate, config=cfg, llm_judge_client=llm_client, judge_model=judge_model
             )
 
-            t_wall0 = time.perf_counter_ns()
+            t0 = time.perf_counter_ns()
             if mock_mode:
-                agent = MockAdversarialAgent(config=cfg)
-                agent.run_scenario(sc, is_adversarial=False, executor=executor)
+                MockAdversarialAgent(config=cfg).run_scenario(sc, is_adversarial=False, executor=executor)
             else:
-                agent = PaymentOperationsAgent(llm_client=llm_client, config=cfg)
-                agent.run_scenario(sc, executor=executor, model_id=model_id)
-            t_wall1 = time.perf_counter_ns()
+                PaymentOperationsAgent(llm_client=llm_client, config=cfg).run_scenario(sc, executor=executor, model_id=model_id)
+            t1 = time.perf_counter_ns()
 
-            # Record pure measured latency (gate ns for deterministic baselines, judge ms for LLM judge)
-            if cfg == "prompt_plus_llm_judge" and executor.judge_latencies_ns:
-                for l_ns in executor.judge_latencies_ns:
-                    latencies_by_baseline[cfg].append(l_ns / 1_000_000.0)
-                decision_lat_ms = float(np.mean(executor.judge_latencies_ns) / 1_000_000.0)
-            elif executor.gate_latencies_ns:
-                for l_ns in executor.gate_latencies_ns:
-                    latencies_by_baseline[cfg].append(l_ns / 1_000_000.0)
-                decision_lat_ms = float(np.mean(executor.gate_latencies_ns) / 1_000_000.0)
-            else:
-                decision_lat_ms = (t_wall1 - t_wall0) / 1_000_000.0
-                latencies_by_baseline[cfg].append(decision_lat_ms)
-
+            decision_lat_ms = _record_decision_latency(cfg, executor, t0, t1, latencies_by_baseline[cfg])
             utility = BenchmarkOracle.score_benign_utility(sc, sim)
             if utility:
                 benign_successes += 1
 
             if cfg == "paygate_full":
-                ok_mon, _ = gate.trace_monitor.verify_trace({order.order_id: order.auth_amount})
+                ok_mon, _ = gate.trace_monitor.verify_trace(
+                    {order.order_id: order.auth_amount},
+                    pre_captured_by_order=gate._initial_captured,
+                )
                 if not ok_mon:
                     trace_violations_total += 1
 
             raw_runs.append({
-                "model": mode_tag,
-                "config": cfg,
-                "scenario_id": sc["scenario_id"],
-                "type": "benign",
-                "utility": utility,
-                "decision_latency_ms": decision_lat_ms,
+                "model": mode_tag, "config": cfg, "scenario_id": sc["scenario_id"],
+                "type": "benign", "utility": utility, "decision_latency_ms": decision_lat_ms,
             })
 
-        # -------------------------------------------------------------
         # 2. Adversarial Scenarios (25)
-        # -------------------------------------------------------------
         for sc in adv_scenarios:
+            print(f"  -> {sc['scenario_id']}", end="", flush=True)
             clock, sim, gate, order = _build_env_for_scenario(sc)
             executor = AgentToolExecutor(
-                simulator=sim,
-                gate=gate,
-                config=cfg,
-                llm_judge_client=llm_client,
-                judge_model=judge_model,
+                simulator=sim, gate=gate, config=cfg, llm_judge_client=llm_client, judge_model=judge_model
             )
 
-            t_wall0 = time.perf_counter_ns()
+            t0 = time.perf_counter_ns()
             if mock_mode:
-                agent = MockAdversarialAgent(config=cfg)
-                trace_res = agent.run_scenario(sc, is_adversarial=True, executor=executor)
+                trace_res = MockAdversarialAgent(config=cfg).run_scenario(sc, is_adversarial=True, executor=executor)
             else:
-                agent = PaymentOperationsAgent(llm_client=llm_client, config=cfg)
-                trace_res = agent.run_scenario(sc, executor=executor, model_id=model_id)
-            t_wall1 = time.perf_counter_ns()
+                trace_res = PaymentOperationsAgent(llm_client=llm_client, config=cfg).run_scenario(sc, executor=executor, model_id=model_id)
+            t1 = time.perf_counter_ns()
 
-            if cfg == "prompt_plus_llm_judge" and executor.judge_latencies_ns:
-                for l_ns in executor.judge_latencies_ns:
-                    latencies_by_baseline[cfg].append(l_ns / 1_000_000.0)
-                decision_lat_ms = float(np.mean(executor.judge_latencies_ns) / 1_000_000.0)
-            elif executor.gate_latencies_ns:
-                for l_ns in executor.gate_latencies_ns:
-                    latencies_by_baseline[cfg].append(l_ns / 1_000_000.0)
-                decision_lat_ms = float(np.mean(executor.gate_latencies_ns) / 1_000_000.0)
-            else:
-                decision_lat_ms = (t_wall1 - t_wall0) / 1_000_000.0
-                latencies_by_baseline[cfg].append(decision_lat_ms)
-
+            decision_lat_ms = _record_decision_latency(cfg, executor, t0, t1, latencies_by_baseline[cfg])
             attack_success = BenchmarkOracle.score_attack_success(sc, sim, sc["initial_order"])
             adv_outcomes_by_baseline[cfg].append(attack_success)
             goal = sc["target_goal"]
@@ -228,24 +214,52 @@ def run_single_model_ablation(
                     ip_attack_successes += 1
 
             if cfg == "paygate_full":
-                ok_mon, _ = gate.trace_monitor.verify_trace({order.order_id: order.auth_amount})
+                ok_mon, _ = gate.trace_monitor.verify_trace(
+                    {order.order_id: order.auth_amount},
+                    pre_captured_by_order=gate._initial_captured,
+                )
                 if not ok_mon:
                     trace_violations_total += 1
 
             raw_runs.append({
-                "model": mode_tag,
-                "config": cfg,
-                "scenario_id": sc["scenario_id"],
-                "type": "adversarial",
-                "goal": goal,
-                "attack_success": attack_success,
-                "decision_latency_ms": decision_lat_ms,
+                "model": mode_tag, "config": cfg, "scenario_id": sc["scenario_id"],
+                "type": "adversarial", "goal": goal, "attack_success": attack_success,
+                "decision_latency_ms": decision_lat_ms, "trace": trace_res.get("trace", []),
+            })
+
+        # 3. Dual Scenarios: Utility Under Attack (5)
+        for sc in dual_scenarios:
+            print(f"  -> {sc['scenario_id']}", end="", flush=True)
+            clock, sim, gate, order = _build_env_for_scenario(sc)
+            executor = AgentToolExecutor(
+                simulator=sim, gate=gate, config=cfg, llm_judge_client=llm_client, judge_model=judge_model
+            )
+
+            t0 = time.perf_counter_ns()
+            if mock_mode:
+                trace_res = MockAdversarialAgent(config=cfg).run_scenario(sc, is_adversarial=True, executor=executor, is_dual=True)
+            else:
+                trace_res = PaymentOperationsAgent(llm_client=llm_client, config=cfg).run_scenario(sc, executor=executor, model_id=model_id)
+            t1 = time.perf_counter_ns()
+
+            decision_lat_ms = _record_decision_latency(cfg, executor, t0, t1, latencies_by_baseline[cfg])
+            d_util = BenchmarkOracle.score_benign_utility(sc, sim)
+            d_atk = BenchmarkOracle.score_attack_success(sc, sim, sc["initial_order"])
+            if d_util:
+                dual_utility_ok += 1
+            if d_atk:
+                dual_asr_ok += 1
+
+            raw_runs.append({
+                "model": mode_tag, "config": cfg, "scenario_id": sc["scenario_id"],
+                "type": "dual", "goal": sc["target_goal"], "utility_under_attack": d_util,
+                "attack_success": d_atk, "decision_latency_ms": decision_lat_ms,
                 "trace": trace_res.get("trace", []),
             })
 
         benign_total = len(benign_scenarios)
+        dual_total = len(dual_scenarios)
         benign_utility_pct = (benign_successes / benign_total) * 100.0
-        frr_pct = 100.0 - benign_utility_pct
         oop_asr_pct = (oop_attack_successes / oop_total) * 100.0 if oop_total else 0.0
         ip_asr_pct = (ip_attack_successes / ip_total) * 100.0 if ip_total else 0.0
         total_asr_k = oop_attack_successes + ip_attack_successes
@@ -261,7 +275,11 @@ def run_single_model_ablation(
             "benign_utility_pct": round(benign_utility_pct, 1),
             "benign_successes": benign_successes,
             "benign_total": benign_total,
-            "frr_pct": round(frr_pct, 1),
+            "dual_utility_pct": round((dual_utility_ok / dual_total) * 100.0, 1) if dual_total else 0.0,
+            "dual_utility_ok": dual_utility_ok,
+            "dual_total": dual_total,
+            "dual_asr_pct": round((dual_asr_ok / dual_total) * 100.0, 1) if dual_total else 0.0,
+            "dual_asr_ok": dual_asr_ok,
             "oop_asr_pct": round(oop_asr_pct, 1),
             "oop_successes": oop_attack_successes,
             "oop_total": oop_total,
@@ -278,7 +296,6 @@ def run_single_model_ablation(
             "trace_monitor_violations": trace_violations_total if cfg == "paygate_full" else None,
         }
 
-    # Compute McNemar Paired Significance Tests vs paygate_full
     mcnemar_stats: Dict[str, Any] = {}
     for b in ["no_defense", "prompt_plus_llm_judge", "static_gateway_r1_r5"]:
         chi2, p_val = mcnemar_paired_test(adv_outcomes_by_baseline[b], adv_outcomes_by_baseline["paygate_full"])
@@ -296,12 +313,9 @@ def run_single_model_ablation(
 def run_ablation(
     mock_mode: bool = False,
     models: Optional[List[str]] = None,
-    judge_model: str = "openai/gpt-oss-safeguard-20b",
+    judge_model: str = "openai/gpt-oss-20b",
     output_dir: str = "results",
 ) -> Dict[str, Any]:
-    """
-    Execute ablation across specified models (or mock CI) and generate artifacts.
-    """
     os.makedirs(output_dir, exist_ok=True)
     if mock_mode:
         res = run_single_model_ablation(mock_mode=True, output_dir=output_dir)
@@ -313,34 +327,33 @@ def run_ablation(
         _print_summary_table("CI-MOCK SMOKE TEST", res["summary"], res["mcnemar"])
         return res["summary"]
 
-    target_models = models or ["openai/gpt-oss-120b", "qwen/qwen3.8-27b"]
+    target_models = models or ["qwen/qwen3.8-27b", "openai/gpt-oss-20b"]
     all_model_summaries: Dict[str, Any] = {}
     all_raw_runs: List[Dict[str, Any]] = []
     agg_latencies: Dict[str, List[float]] = {
-        "no_defense": [],
-        "prompt_plus_llm_judge": [],
-        "static_gateway_r1_r5": [],
-        "paygate_full": [],
+        "no_defense": [], "prompt_plus_llm_judge": [], "static_gateway_r1_r5": [], "paygate_full": []
     }
 
     for model_id in target_models:
         res = run_single_model_ablation(
-            mock_mode=False,
-            model_id=model_id,
-            judge_model=judge_model,
-            output_dir=output_dir,
+            mock_mode=False, model_id=model_id, judge_model=judge_model, output_dir=output_dir
         )
         all_model_summaries[model_id] = {"summary": res["summary"], "mcnemar": res["mcnemar"]}
         all_raw_runs.extend(res["raw_runs"])
         for b, lats in res["latencies_by_baseline"].items():
             agg_latencies[b].extend(lats)
         _print_summary_table(model_id, res["summary"], res["mcnemar"])
+        safe_id = model_id.replace("/", "_").replace(":", "_")
+        with open(os.path.join(output_dir, f"checkpoint_{safe_id}.json"), "w", encoding="utf-8") as f:
+            json.dump(res, f, indent=2)
 
-    # Compute pooled aggregate across evaluated models
     pooled_summary: Dict[str, Any] = {}
     for cfg in ["no_defense", "prompt_plus_llm_judge", "static_gateway_r1_r5", "paygate_full"]:
         benign_ok = sum(all_model_summaries[m]["summary"][cfg]["benign_successes"] for m in target_models)
         benign_n = sum(all_model_summaries[m]["summary"][cfg]["benign_total"] for m in target_models)
+        dual_u_ok = sum(all_model_summaries[m]["summary"][cfg]["dual_utility_ok"] for m in target_models)
+        dual_n = sum(all_model_summaries[m]["summary"][cfg]["dual_total"] for m in target_models)
+        dual_a_ok = sum(all_model_summaries[m]["summary"][cfg]["dual_asr_ok"] for m in target_models)
         oop_ok = sum(all_model_summaries[m]["summary"][cfg]["oop_successes"] for m in target_models)
         oop_n = sum(all_model_summaries[m]["summary"][cfg]["oop_total"] for m in target_models)
         ip_ok = sum(all_model_summaries[m]["summary"][cfg]["ip_successes"] for m in target_models)
@@ -352,7 +365,11 @@ def run_ablation(
             "benign_utility_pct": round((benign_ok / benign_n) * 100.0, 1),
             "benign_successes": benign_ok,
             "benign_total": benign_n,
-            "frr_pct": round(100.0 - (benign_ok / benign_n) * 100.0, 1),
+            "dual_utility_pct": round((dual_u_ok / dual_n) * 100.0, 1) if dual_n else 0.0,
+            "dual_utility_ok": dual_u_ok,
+            "dual_total": dual_n,
+            "dual_asr_pct": round((dual_a_ok / dual_n) * 100.0, 1) if dual_n else 0.0,
+            "dual_asr_ok": dual_a_ok,
             "oop_asr_pct": round((oop_ok / oop_n) * 100.0, 1),
             "oop_successes": oop_ok,
             "oop_total": oop_n,
@@ -366,7 +383,6 @@ def run_ablation(
             "latency_p99_ms": round(float(np.percentile(lat_arr, 99)), 6),
         }
 
-    # Save live JSONL and JSON summaries
     with open(os.path.join(output_dir, "raw_runs.jsonl"), "w", encoding="utf-8") as f:
         for r in all_raw_runs:
             f.write(json.dumps(r) + "\n")
@@ -392,32 +408,33 @@ def run_ablation(
 
 
 def _print_summary_table(title: str, summary: Dict[str, Any], mcnemar: Dict[str, Any]) -> None:
-    print("\n" + "=" * 102)
+    print("\n" + "=" * 116)
     print(f"PAYGATE-BENCH (v2.0): {title}")
-    print("=" * 102)
+    print("=" * 116)
     print(
-        f"{'Baseline':<23} | {'Benign Util':<14} | {'OOP ASR (G1-3)':<15} | "
-        f"{'IP ASR (G4-5)':<15} | {'Total ASR [95% CI]':<20} | {'p50 Latency'}"
+        f"{'Baseline':<22} | {'Benign Util':<13} | {'Util Under Atk':<14} | {'OOP ASR (G1-3)':<14} | "
+        f"{'IP ASR (G4-5)':<14} | {'Total ASR [95% CI]':<19} | {'p50 Latency'}"
     )
-    print("-" * 102)
+    print("-" * 116)
     for b in ["no_defense", "prompt_plus_llm_judge", "static_gateway_r1_r5", "paygate_full"]:
         r = summary[b]
         p50 = r["latency_p50_ms"]
         lat_str = f"{p50:.2f} ms" if p50 >= 1.0 else f"{p50 * 1000:.2f} µs"
         ci = r.get("total_wilson_95", [0, 0])
         print(
-            f"{b:<23} | "
+            f"{b:<22} | "
             f"{r['benign_utility_pct']:>5.1f}% ({r['benign_successes']:>2}/{r['benign_total']}) | "
+            f"{r.get('dual_utility_pct',0.0):>5.1f}% ({r.get('dual_utility_ok',0):>2}/{r.get('dual_total',0)})  | "
             f"{r['oop_asr_pct']:>5.1f}% ({r['oop_successes']:>2}/{r['oop_total']}) | "
             f"{r['ip_asr_pct']:>5.1f}% ({r['ip_successes']:>2}/{r['ip_total']}) | "
             f"{r['total_asr_pct']:>5.1f}% [{ci[0]:.1f}%, {ci[1]:.1f}%] | "
             f"{lat_str}"
         )
     if mcnemar:
-        print("-" * 102)
+        print("-" * 116)
         for pair, stats in mcnemar.items():
             print(f"McNemar {pair}: chi2={stats['chi2']}, p={stats['p_value']}")
-    print("=" * 102)
+    print("=" * 116)
 
 
 def main():
@@ -427,7 +444,7 @@ def main():
     parser.add_argument(
         "--models",
         nargs="+",
-        default=["openai/gpt-oss-120b", "qwen/qwen3.8-27b"],
+        default=["qwen/qwen3.8-27b", "openai/gpt-oss-20b"],
         help="List of LLM model IDs for live multi-model evaluation",
     )
     parser.add_argument("--judge-model", default="openai/gpt-oss-safeguard-20b", help="LLM Judge guardrail model ID")

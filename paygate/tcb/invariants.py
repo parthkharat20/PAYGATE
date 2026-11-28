@@ -57,6 +57,7 @@ class DeterministicGate:
         self.kill_switch_active: bool = False
         self._idempotency_cache: Dict[str, Tuple[str, GateDecision]] = {}
         self._sliding_window: deque[Tuple[float, Decimal]] = deque()
+        self._initial_captured: Dict[str, Decimal] = {}
 
     def set_kill_switch(self, active: bool) -> None:
         """Emergency administrative kill switch."""
@@ -193,6 +194,42 @@ class DeterministicGate:
                     violated_rules.append("R8")
 
         # -------------------------------------------------------------
+        # Online MFOTL-Inspired Temporal Trace Monitor Check (P1-P5)
+        # -------------------------------------------------------------
+        ev_map = {
+            "propose_capture": "capture",
+            "capture": "capture",
+            "void_authorization": "void",
+            "void": "void",
+            "issue_refund": "refund",
+            "refund": "refund",
+            "set_consent": "set_consent",
+            "update_consent": "set_consent",
+            "send_notification": "notify",
+            "send_supplier_message": "notify",
+        }
+        proposed_ev = TraceEvent(
+            timestamp=now,
+            event_type=ev_map.get(request.action_type, request.action_type),
+            order_id=request.order_id,
+            amount=request.amount,
+            currency=request.currency,
+            recipient_id=request.recipient_id,
+            consent_state=request.consent_state.value if request.consent_state else None,
+            decision="PENDING",
+        )
+        # Only apply online trace blocking when full TCB rules (R8/R6/R4/R1) are active
+        self._initial_captured.setdefault(order.order_id, order.captured_total)
+        if active_rules >= {"R1", "R4", "R8"} and not is_replay:
+            ok_mon, _ = self.trace_monitor.check_step(
+                proposed_ev,
+                order_auth_limits={order.order_id: order.auth_amount},
+                pre_captured_by_order=self._initial_captured,
+            )
+            if not ok_mon and "TRACE_MONITOR" not in violated_rules:
+                violated_rules.append("TRACE_MONITOR")
+
+        # -------------------------------------------------------------
         # Decision Synthesis
         # -------------------------------------------------------------
         if is_replay:
@@ -247,29 +284,8 @@ class DeterministicGate:
             )
 
         # Record event in MFOTL-inspired trace monitor
-        ev_map = {
-            "propose_capture": "capture",
-            "capture": "capture",
-            "void_authorization": "void",
-            "void": "void",
-            "issue_refund": "refund",
-            "refund": "refund",
-            "set_consent": "set_consent",
-            "update_consent": "set_consent",
-            "send_notification": "notify",
-            "send_supplier_message": "notify",
-        }
         self.trace_monitor.record(
-            TraceEvent(
-                timestamp=now,
-                event_type=ev_map.get(request.action_type, request.action_type),
-                order_id=request.order_id,
-                amount=request.amount,
-                currency=request.currency,
-                recipient_id=request.recipient_id,
-                consent_state=request.consent_state.value if request.consent_state else None,
-                decision=decision.action.value,
-            )
+            proposed_ev.model_copy(update={"decision": decision.action.value})
         )
 
         return decision

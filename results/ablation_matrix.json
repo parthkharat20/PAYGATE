@@ -1,0 +1,45 @@
+{
+  "total_live_adversarial_traces": 43,
+  "incremental_stack_ablation": {
+    "L0_Unconstrained_Raw": {
+      "attack_successes": 14,
+      "total_replayed": 43,
+      "asr_pct": 32.6
+    },
+    "L1_DFA_Only": {
+      "attack_successes": 13,
+      "total_replayed": 43,
+      "asr_pct": 30.2
+    },
+    "L2_Perimeter_R1_R2_R4_R5": {
+      "attack_successes": 13,
+      "total_replayed": 43,
+      "asr_pct": 30.2
+    },
+    "L3_Add_OrderBound_R3": {
+      "attack_successes": 12,
+      "total_replayed": 43,
+      "asr_pct": 27.9
+    },
+    "L4_Add_ConsentHMAC_R6": {
+      "attack_successes": 11,
+      "total_replayed": 43,
+      "asr_pct": 25.6
+    },
+    "L5_Full_TCB_Add_SessionIFC_R8": {
+      "attack_successes": 0,
+      "total_replayed": 43,
+      "asr_pct": 0.0
+    }
+  },
+  "non_short_circuit_rule_attribution": {
+    "R1": 0,
+    "R2": 0,
+    "R3": 1,
+    "R4": 0,
+    "R5": 0,
+    "R6": 3,
+    "R7": 0,
+    "R8": 45
+  }
+}

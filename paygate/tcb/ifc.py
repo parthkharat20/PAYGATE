@@ -1,9 +1,10 @@
 """
 Dynamic Information-Flow Control (IFC) and Provenance Lattice.
-Implements out-of-band session taint tracking, capability/data-flow separation,
-and non-interference enforcement (Rule R8) inside the TCB.
+Implements out-of-band session AND value-level provenance tracking, explicit
+ERP capability binding, and non-interference enforcement (Rule R8) inside the TCB.
 """
 
+import re
 from typing import Dict, Set, List, Tuple, Optional
 from paygate.tcb.models import ProvenanceLabel, ToolRequest, Order, ConsentState
 
@@ -36,17 +37,22 @@ class ProvenanceLattice:
 
 class TaintTracker:
     """
-    Out-of-band TCB provenance & capability tracker.
-    Tracks untrusted document ingestion inside the session so enforcement
-    never trusts provenance flags supplied by the untrusted LLM agent.
+    Out-of-band TCB provenance & capability tracker (session-level + value-level).
+    Tracks untrusted document ingestion inside the session, extracts external literals
+    (merchant IDs, email addresses) with UNTRUSTED_EXTERNAL provenance labels, and binds
+    explicit TRUSTED_ERP task capabilities before untrusted context is ingested.
     """
 
     DEFAULT_TRUSTED_RECIPIENTS = {"buyer@example.com", "erp-audit@company.internal"}
+    _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+    _MERCHANT_RE = re.compile(r"MERCH-[A-Z0-9_-]+")
 
     def __init__(self):
         self._doc_provenance: Dict[str, ProvenanceLabel] = {}
         self._docs_read_in_session: List[Tuple[str, ProvenanceLabel]] = []
         self._untrusted_contents: List[str] = []
+        self._untrusted_literals: Dict[str, ProvenanceLabel] = {}
+        self._trusted_literals: Set[str] = set()
         self._active_canary_tokens: Set[str] = set()
         self._trusted_recipients: Set[str] = set(self.DEFAULT_TRUSTED_RECIPIENTS)
         self._trusted_user_intent: str = ""
@@ -55,20 +61,19 @@ class TaintTracker:
     def set_trusted_context(
         self,
         user_intent: str,
-        authorized_capabilities: Optional[Set[str]] = None,
+        authorized_capabilities: Optional[Set[str] | List[str]] = None,
         trusted_recipients: Optional[Set[str]] = None,
     ) -> None:
         """
-        Bind the TRUSTED_ERP user instruction and authorized capabilities before
+        Bind the TRUSTED_ERP capability set and user instruction before
         any untrusted external documents are ingested.
         """
         self._trusted_user_intent = user_intent.lower()
         if authorized_capabilities is not None:
             self._authorized_capabilities = set(authorized_capabilities)
         else:
-            # Infer baseline authorized capability strictly from TRUSTED_ERP prompt
             caps: Set[str] = {"read_document", "get_order", "send_notification"}
-            if any(k in self._trusted_user_intent for k in ("capture", "settlement", "invoice", "delivery", "dispatch", "reconcil", "milestone", "retention")):
+            if any(k in self._trusted_user_intent for k in ("capture", "settlement", "invoice", "delivery", "dispatch", "reconcil", "milestone", "retention", "order")):
                 caps.add("propose_capture")
             if any(k in self._trusted_user_intent for k in ("refund", "damaged", "return", "defective")):
                 caps.add("issue_refund")
@@ -81,21 +86,45 @@ class TaintTracker:
         if trusted_recipients:
             self._trusted_recipients.update(trusted_recipients)
 
+    def register_trusted_order(self, order: Order) -> None:
+        """Record TRUSTED_ERP origin literals from verified ERP order records."""
+        self._trusted_literals.add(order.bound_merchant_id or order.merchant_id)
+        self._trusted_literals.add(order.currency)
+        self._trusted_literals.add(order.order_id)
+
     def register_document(self, doc_id: str, label: ProvenanceLabel) -> None:
         self._doc_provenance[doc_id] = label
 
     def get_document_provenance(self, doc_id: str) -> ProvenanceLabel:
         return self._doc_provenance.get(doc_id, ProvenanceLabel.UNTRUSTED_EXTERNAL)
 
+    def get_value_provenance(self, value: str) -> ProvenanceLabel:
+        """
+        Determine value-level provenance for a literal argument (e.g., merchant ID or email).
+        TRUSTED_ERP bindings take precedence; literals introduced solely by untrusted
+        external documents carry UNTRUSTED_EXTERNAL taint.
+        """
+        if value in self._trusted_literals or value.lower() in {r.lower() for r in self._trusted_recipients}:
+            return ProvenanceLabel.TRUSTED_ERP
+        if value in self._untrusted_literals or value.lower() in {k.lower() for k in self._untrusted_literals}:
+            return ProvenanceLabel.UNTRUSTED_EXTERNAL
+        return ProvenanceLabel.TRUSTED_ERP
+
     def record_document_read(self, doc_id: str, content: str = "") -> ProvenanceLabel:
         """
         Called out-of-band by the Simulator/Executor whenever the agent reads a document.
-        Taints the session if the document provenance is UNTRUSTED_EXTERNAL.
+        Taints the session and indexes untrusted literals extracted from external content.
         """
         label = self.get_document_provenance(doc_id)
         self._docs_read_in_session.append((doc_id, label))
         if label in (ProvenanceLabel.UNTRUSTED_EXTERNAL, ProvenanceLabel.TAINTED) and content:
             self._untrusted_contents.append(content)
+            for merch in self._MERCHANT_RE.findall(content):
+                if merch not in self._trusted_literals:
+                    self._untrusted_literals[merch] = ProvenanceLabel.UNTRUSTED_EXTERNAL
+            for email in self._EMAIL_RE.findall(content):
+                if email.lower() not in {r.lower() for r in self._trusted_recipients}:
+                    self._untrusted_literals[email.lower()] = ProvenanceLabel.UNTRUSTED_EXTERNAL
         return label
 
     def is_session_tainted(self) -> bool:
@@ -117,29 +146,39 @@ class TaintTracker:
         """
         Enforce R8 (Provenance & Capability Non-Interference) for financial mutations:
         1. Explicit UNTRUSTED_EXTERNAL / TAINTED provenance tag is rejected.
-        2. Recipient ID must strictly match TRUSTED_ERP order.bound_merchant_id.
-        3. When the session has ingested UNTRUSTED_EXTERNAL data:
-           - High-impact control changes (void, refund, set_consent) require explicit
-             TRUSTED_ERP capability authorization from the pre-injection user context;
-             untrusted supplier emails cannot trigger voids, refunds, or consent steering.
+        2. Value-level provenance & ERP binding: recipient_id must match order.bound_merchant_id
+           and cannot carry UNTRUSTED_EXTERNAL literal taint extracted from external docs.
+        3. When session has ingested UNTRUSTED_EXTERNAL data:
+           - Financial action must belong to explicit TRUSTED_ERP authorized_capabilities.
            - Untrusted external data can NEVER transition consent to APPROVED or CANCEL.
+           - Capture cannot occur on non-APPROVED orders after reading untrusted input.
         """
+        self.register_trusted_order(order)
+
         if request.provenance in (ProvenanceLabel.UNTRUSTED_EXTERNAL, ProvenanceLabel.TAINTED):
             return False, f"R8 Violation: Financial action {request.action_type} carries tainted provenance"
 
-        # Strict ERP recipient binding (blocks allowlisted decoy routing)
+        # Value-level & ERP recipient binding check (blocks decoy routing)
         if request.recipient_id is not None:
             if request.recipient_id != order.bound_merchant_id:
                 return False, (
                     f"R8 Violation: recipient_id '{request.recipient_id}' not bound to ERP order "
-                    f"'{order.bound_merchant_id}'. Tainted merchant redirection blocked."
+                    f"'{order.bound_merchant_id}'. Tainted merchant redirection blocked "
+                    f"(provenance={self.get_value_provenance(request.recipient_id).value})."
                 )
+            if self.get_value_provenance(request.recipient_id) == ProvenanceLabel.UNTRUSTED_EXTERNAL:
+                return False, f"R8 Violation: recipient_id '{request.recipient_id}' tainted by untrusted document."
 
         tainted = self.is_session_tainted()
         act = request.action_type
 
-        # Capability-based non-interference under tainted context
         if tainted:
+            if act in ("propose_capture", "capture"):
+                if self._authorized_capabilities and "propose_capture" not in self._authorized_capabilities:
+                    return False, "R8 Violation: Capture capability not authorized by TRUSTED_ERP ticket"
+                if order.consent_state != ConsentState.APPROVED:
+                    return False, "R8 Violation: Capture attempted on non-APPROVED order after reading untrusted input"
+
             if act in ("void_authorization", "void") and "void_authorization" not in self._authorized_capabilities:
                 return False, "R8 Violation: Untrusted external document cannot induce unauthorized void capability"
 
@@ -155,11 +194,6 @@ class TaintTracker:
                         f"{request.consent_state.value} without out-of-band cryptographic ERP approval"
                     )
 
-            # Salami / unconsented micro-capture check: if order was in WAIT (not APPROVED by ERP),
-            # reading an untrusted doc cannot authorize partial capture
-            if act in ("propose_capture", "capture") and order.consent_state != ConsentState.APPROVED:
-                return False, "R8 Violation: Capture attempted on non-APPROVED order after reading untrusted input"
-
         return True, None
 
     def check_outbound_sink(
@@ -169,11 +203,11 @@ class TaintTracker:
         provenance: Optional[ProvenanceLabel] = None,
     ) -> Tuple[bool, Optional[str]]:
         """
-        Enforce R8 for outbound messaging (e.g. send_notification, send_supplier_message):
-        - Blocks leakage of CONFIDENTIAL_ERP tokens (canary secrets).
+        Enforce R8 for outbound messaging:
+        - Blocks leakage of CONFIDENTIAL_ERP canary secrets.
         - Blocks CONFIDENTIAL_ERP marked payloads.
-        - Under tainted context, blocks exfiltration to untrusted external recipients
-          not in the TRUSTED_ERP recipient allowlist.
+        - Blocks untrusted literal recipient emails extracted from external documents.
+        - Under tainted context, blocks exfiltration outside trusted ERP contacts.
         """
         if message:
             msg_lower = message.lower()
@@ -183,6 +217,9 @@ class TaintTracker:
 
         if provenance == ProvenanceLabel.CONFIDENTIAL_ERP:
             return False, "R8 Violation: Attempted exfiltration of CONFIDENTIAL_ERP marked payload"
+
+        if recipient and self.get_value_provenance(recipient) == ProvenanceLabel.UNTRUSTED_EXTERNAL:
+            return False, f"R8 Violation: Outbound recipient '{recipient}' originated from untrusted external document"
 
         if self.is_session_tainted() and recipient:
             if recipient.lower() not in {r.lower() for r in self._trusted_recipients}:
